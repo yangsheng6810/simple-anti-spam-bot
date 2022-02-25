@@ -16,9 +16,6 @@ static ADMIN: OnceCell<HashSet<i64>> = OnceCell::new();
 static SPAM: OnceCell<HashSet<String>> = OnceCell::new();
 
 fn is_spam(ss: &str) -> bool {
-    // if ss.contains("蚂蚁币") {
-    //     return true;
-    // }
     let spam_db = SPAM.get().unwrap().clone();
     for spam_str in spam_db {
         trace!("Testing against spam str: {:?}", &spam_str);
@@ -27,6 +24,38 @@ fn is_spam(ss: &str) -> bool {
         }
     }
     false
+}
+
+async fn handle_message(message: &Message, bot: &AutoSend<Bot>) {
+    let message_id = message.id.clone();
+    debug!("message id {:?}", &message_id);
+    let chat_id = message.chat.id.clone();
+    debug!("chat id {:?}", &chat_id);
+    if let Common(msg) = message.kind.clone() {
+        if let Text(msg_text) = msg.media_kind {
+            debug!("text is {:?}", &msg_text.text);
+            let content = msg_text.text.clone();
+            if is_spam(&content) {
+                warn!("SPAM found and deleted! Text is {:?}", &msg_text.text);
+                bot.delete_message(chat_id, message_id)
+                   .await
+                   .map_err(
+                       |e| info!("Delete message {:?} failed with error {:?}", message_id, &e))
+                   .ok();
+
+                if let Some(user_id) = msg.from {
+                    bot.kick_chat_member(chat_id, user_id.id)
+                       .revoke_messages(true)
+                       .await
+                       .map_err(
+                           |e| info!("Revoke message by user {:?} failed with error {:?}", user_id, &e))
+                       .ok();
+                } else {
+                    warn!("could not find")
+                }
+            };
+        }
+    }
 }
 
 #[tokio::main]
@@ -43,30 +72,8 @@ async fn main() {
             |update: Update, bot: AutoSend<Bot>| async move {
                 debug!("Received a message edit.");
                 if let EditedMessage(message) = update.kind {
-                    let message_id = message.id.clone();
-                    debug!("message id {:?}", &message_id);
-                    let chat_id = message.chat.id.clone();
-                    debug!("chat id {:?}", &chat_id);
-                    if let Common(msg) = message.kind {
-                        if let Text(msg_text) = msg.media_kind {
-                            debug!("text is {:?}", &msg_text.text);
-                            let content = msg_text.text.clone();
-                            if is_spam(&content) {
-                                warn!("SPAM found and deleted! Text is {:?}", &msg_text.text);
-                                bot.delete_message(chat_id, message_id).await?;
-
-                                if let Some(user_id) = msg.from {
-                                    bot.kick_chat_member(chat_id, user_id.id)
-                                       .revoke_messages(true)
-                                       .await?;
-                                } else {
-                                    warn!("could not find")
-                                }
-                            }
-                        }
-                    }
+                    handle_message(&message, &bot).await;
                 }
-                // bot.send_message(msg.chat.id, "This is a group chat.").await?;
                 respond(())
             }
         ))
@@ -74,30 +81,8 @@ async fn main() {
             |update: Update, bot: AutoSend<Bot>| async move {
                 debug!("Received a normal message.");
                 if let UpdateKind::Message(message) = update.kind {
-                    let message_id = message.id.clone();
-                    debug!("message id {:?}", &message_id);
-                    let chat_id = message.chat.id.clone();
-                    debug!("chat id {:?}", &chat_id);
-                    if let Common(msg) = message.kind {
-                        if let Text(msg_text) = msg.media_kind {
-                            debug!("text is {:?}", &msg_text.text);
-                            let content = msg_text.text.clone();
-                            if is_spam(&content) {
-                                warn!("SPAM found and deleted! Text is {:?}", &msg_text.text);
-                                bot.delete_message(chat_id, message_id).await?;
-
-                                if let Some(user_id) = msg.from {
-                                    bot.kick_chat_member(chat_id, user_id.id)
-                                       .revoke_messages(true)
-                                       .await?;
-                                } else {
-                                    warn!("could not find")
-                                }
-                            }
-                        }
-                    }
+                    handle_message(&message, &bot).await;
                 }
-                // bot.send_message(msg.chat.id, "This is a group chat.").await?;
                 respond(())
             }
             ,))
