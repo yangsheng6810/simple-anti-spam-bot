@@ -1,7 +1,6 @@
 use log;
 use teloxide::Bot;
 use teloxide::types::Message;
-use teloxide::dispatching::*;
 use teloxide::prelude::*;
 use anyhow::Result;
 
