@@ -1,13 +1,18 @@
 #+TITLE: Simple Anti-Spam Bot for Telegram
+* What it does
+1. Match all messages or *edited messages* against a list of spam strings
+2. Delete the messages and ban the senders of those messages from the current group
 * Usage
-In order to run the bot, you need the following environment variables.
+First you need to create a telegram bot. Check [[https://core.telegram.org/bots][Bots: An introduction for developers]]. Then you need to enable =privacy mode= for the bot, add it to your group , and promote it to an admin. Note: you need to enable privacy mode *before* adding it to your group. If you did it in the wrong order, remove the bot from your group, and add it back.
+
+You can run the bot with ~cargo run --release~. In order for the bot to run, you need to set the following environment variables.
 #+begin_example
 TELOXIDE_TOKEN="..."
 SPAM_STR="..."
 #+end_example
- =TELOXIDE_TOKEN= is your telegram bot API token. If you do not know what it is, check [[https://core.telegram.org/bots][Bots: An introduction for developers]]. =SPAM_STR= is a string of the spam strings you want to detect against, separated with colon, e.g. ="this is a spam:this is another spam"=.
+ =TELOXIDE_TOKEN= is your telegram bot API token.  =SPAM_STR= is a string of the spam strings you want to detect against, separated with colon, e.g. =this is a spam:this is another spam=.
 
-An easy way to run is put the following in a script, and run before calling `cargo run`
+An easy way to run is put the following in a script, and run before calling ~cargo run --release~
 #+begin_src shell
 export TELOXIDE_TOKEN="..."
 # uncomment the following to change logging level
