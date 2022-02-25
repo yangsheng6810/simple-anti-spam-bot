@@ -37,36 +37,28 @@ async fn main() {
 
     let bot = Bot::from_env().auto_send();
 
+
     let handler = dptree::entry()
         .branch(Update::filter_edited_message().endpoint(
             |update: Update, bot: AutoSend<Bot>| async move {
-                info!("Received a message edit.");
-                // dbg!(&update);
+                debug!("Received a message edit.");
                 if let EditedMessage(message) = update.kind {
-                    // dbg!(&msg.kind);
                     let message_id = message.id.clone();
                     debug!("message id {:?}", &message_id);
                     let chat_id = message.chat.id.clone();
                     debug!("chat id {:?}", &chat_id);
                     if let Common(msg) = message.kind {
-                        // dbg!(&msg);
                         if let Text(msg_text) = msg.media_kind {
-                            // dbg!(&msg);
                             debug!("text is {:?}", &msg_text.text);
                             let content = msg_text.text.clone();
                             if is_spam(&content) {
-                                warn!("SPAM found!");
-                                warn!("text is {:?}", &msg_text.text);
-                                warn!("delete it!");
+                                warn!("SPAM found and deleted! Text is {:?}", &msg_text.text);
                                 bot.delete_message(chat_id, message_id).await?;
 
                                 if let Some(user_id) = msg.from {
-                                    bot.kick_chat_member(
-                                        chat_id,
-                                        user_id.id
-                                    )
+                                    bot.kick_chat_member(chat_id, user_id.id)
                                        .revoke_messages(true)
-                                     .await?;
+                                       .await?;
                                 } else {
                                     warn!("could not find")
                                 }
@@ -81,32 +73,23 @@ async fn main() {
         .branch(Update::filter_message().endpoint(
             |update: Update, bot: AutoSend<Bot>| async move {
                 debug!("Received a normal message.");
-                // dbg!(&update);
                 if let UpdateKind::Message(message) = update.kind {
-                    // dbg!(&msg.kind);
                     let message_id = message.id.clone();
                     debug!("message id {:?}", &message_id);
                     let chat_id = message.chat.id.clone();
                     debug!("chat id {:?}", &chat_id);
                     if let Common(msg) = message.kind {
-                        // dbg!(&msg);
                         if let Text(msg_text) = msg.media_kind {
-                            // dbg!(&msg);
                             debug!("text is {:?}", &msg_text.text);
                             let content = msg_text.text.clone();
                             if is_spam(&content) {
-                                warn!("SPAM found!");
-                                warn!("text is {:?}", &msg_text.text);
-                                warn!("delete it!");
+                                warn!("SPAM found and deleted! Text is {:?}", &msg_text.text);
                                 bot.delete_message(chat_id, message_id).await?;
 
                                 if let Some(user_id) = msg.from {
-                                    bot.kick_chat_member(
-                                        chat_id,
-                                        user_id.id
-                                    )
+                                    bot.kick_chat_member(chat_id, user_id.id)
                                        .revoke_messages(true)
-                                     .await?;
+                                       .await?;
                                 } else {
                                     warn!("could not find")
                                 }
