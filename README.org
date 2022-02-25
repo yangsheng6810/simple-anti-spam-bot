@@ -1,0 +1,18 @@
+#+TITLE: Simple Anti-Spam Bot for Telegram
+* Usage
+In order to run the bot, you need the following environment variables.
+#+begin_example
+TELOXIDE_TOKEN="..."
+SPAM_STR="..."
+#+end_example
+ =TELOXIDE_TOKEN= is your telegram bot API token. If you do not know what it is, check [[https://core.telegram.org/bots][Bots: An introduction for developers]]. =SPAM_STR= is a string of the spam strings you want to detect against, separated with colon, e.g. ="this is a spam:this is another spam"=.
+
+An easy way to run is put the following in a script, and run before calling `cargo run`
+#+begin_src shell
+export TELOXIDE_TOKEN="..."
+# uncomment the following to change logging level
+# export RUST_LOG=info
+export SPAM_STR="..."
+#+end_src
+* License
+AGPL-3.0-or-later
