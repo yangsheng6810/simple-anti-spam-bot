@@ -37,19 +37,17 @@ async fn handle_message(message: &Message, bot: &AutoSend<Bot>) {
             let content = msg_text.text.clone();
             if is_spam(&content) {
                 warn!("SPAM found and deleted! Text is {:?}", &msg_text.text);
-                bot.delete_message(chat_id, message_id)
-                   .await
-                   .map_err(
-                       |e| info!("Delete message {:?} failed with error {:?}", message_id, &e))
-                   .ok();
-
+                match bot.delete_message(chat_id, message_id).await {
+                    Ok(_) => warn!("Message {:?} deleted", &message_id),
+                    Err(e) => info!("Delete message {:?} failed with error {:?}", &message_id, &e)
+                }
                 if let Some(user_id) = msg.from {
-                    bot.kick_chat_member(chat_id, user_id.id)
-                       .revoke_messages(true)
-                       .await
-                       .map_err(
-                           |e| info!("Revoke message by user {:?} failed with error {:?}", user_id, &e))
-                       .ok();
+                    match bot.kick_chat_member(chat_id, user_id.id)
+                             .revoke_messages(true).await
+                    {
+                        Ok(_) => warn!("User {:?} revoked", &user_id.id),
+                        Err(e) => info!("Revoke message by user {:?} failed with error {:?}", user_id, &e)
+                    }
                 } else {
                     warn!("could not find")
                 }
