@@ -1,10 +1,17 @@
 // This bot answers how many messages it received in total on every message.
-use teloxide::{prelude2::*, dispatching2::UpdateFilterExt};
-use teloxide::types::UpdateKind::{EditedMessage};
-use teloxide::types::MessageKind::{Common};
-use teloxide::types::UpdateKind;
-use teloxide::types::MediaKind::{Text};
+use teloxide::{
+    prelude2::*,
+    dispatching2::UpdateFilterExt
+};
+use teloxide::types::{
+    UpdateKind,
+    MessageKind,
+    MediaKind,
+};
+use teloxide::utils::command::BotCommand;
 
+use tokio::sync::RwLock;
+use std::sync::Arc;
 use once_cell::sync::OnceCell;
 use std::collections::HashSet;
 use std::env;
@@ -15,27 +22,41 @@ use tracing_subscriber;
 static ADMIN: OnceCell<HashSet<i64>> = OnceCell::new();
 static SPAM: OnceCell<HashSet<String>> = OnceCell::new();
 
-fn is_spam(ss: &str) -> bool {
-    let spam_db = SPAM.get().unwrap().clone();
-    for spam_str in spam_db {
-        trace!("Testing against spam str: {:?}", &spam_str);
-        if ss.contains(&spam_str) {
+async fn is_spam(ss: &str, lock: Arc<RwLock<HashSet<String>>>) -> bool {
+    // let spam_db = SPAM.get().unwrap().clone();
+    let spam_db = lock.read().await;
+    for spam_str in &*spam_db {
+        trace!("Testing against spam str: {:?}", spam_str);
+        if ss.contains(spam_str) {
             return true;
         }
     }
     false
 }
 
-async fn handle_message(message: &Message, bot: &AutoSend<Bot>) {
+#[derive(BotCommand, Clone)]
+#[command(rename = "lowercase", description = "Admin commands")]
+enum AdminCommand {
+    #[command(description = "Add a new blocked phrase")]
+    Add(String),
+    #[command(description = "Remove an existing blocked phrase")]
+    Remove(String),
+    #[command(description = "Print current blocked phrases")]
+    Print,
+    #[command(description = "Show help")]
+    Help,
+}
+
+async fn handle_message(message: &Message, bot: &AutoSend<Bot>, lock: Arc<RwLock<HashSet<String>>>) {
     let message_id = message.id.clone();
     debug!("message id {:?}", &message_id);
     let chat_id = message.chat.id.clone();
     debug!("chat id {:?}", &chat_id);
-    if let Common(msg) = message.kind.clone() {
-        if let Text(msg_text) = msg.media_kind {
+    if let MessageKind::Common(msg) = message.kind.clone() {
+        if let MediaKind::Text(msg_text) = msg.media_kind {
             debug!("text is {:?}", &msg_text.text);
             let content = msg_text.text.clone();
-            if is_spam(&content) {
+            if is_spam(&content, lock).await {
                 warn!("SPAM found and deleted! Text is {:?}", &msg_text.text);
                 match bot.delete_message(chat_id, message_id).await {
                     Ok(_) => warn!("Message {:?} deleted", &message_id),
@@ -60,26 +81,84 @@ async fn handle_message(message: &Message, bot: &AutoSend<Bot>) {
 async fn main() {
     tracing_subscriber::fmt::init();
     get_env();
+    let spam_set_lock = Arc::new(RwLock::new(SPAM.get().unwrap().clone()));
     info!("Starting shared_state_bot...");
 
     let bot = Bot::from_env().auto_send();
 
 
     let handler = dptree::entry()
+        .branch(
+            // Filter a maintainer by a used ID.
+            dptree::filter(|msg: Message| {
+                // msg.from().map(|user| user.id == cfg.bot_maintainer).unwrap_or_default()
+                is_from_admin(&msg)
+            })
+                .filter_command::<AdminCommand>()
+                .endpoint(
+                    |msg: Message, bot: AutoSend<Bot>, cmd: AdminCommand, lock: Arc<RwLock<HashSet<String>>>| async move {
+                        match cmd {
+                            AdminCommand::Add(ss) => {
+                                {
+                                    let mut w = lock.write().await;
+                                    w.insert(ss.clone());
+                                }
+                                bot.send_message(msg.chat.id,
+                                                 format!("SPAM phrarse {} added to the database. \
+                                                          If you added it by mistake, please delete it using the \"\\delete\" command",
+                                                         &ss).as_str()).await?;
+                                Ok(())
+                            }
+                            AdminCommand::Remove(ss) => {
+                                let final_msg;
+                                {
+                                    let mut w = lock.write().await;
+                                    if w.contains(&ss) {
+                                        w.remove(&ss);
+                                        final_msg = format!("SPAM phrarse {} removed from the database", &ss)
+                                    } else {
+                                        final_msg = String::from("SPAM phrase not found in the database. \
+                                                                 Please use \"\\print\" to show a list of spam phrases");
+                                    }
+                                }
+                                bot.send_message(msg.chat.id, &final_msg).await?;
+                                Ok(())
+                            }
+                            AdminCommand::Help => {
+                                info!("Handling help request");
+                                bot.send_message(msg.chat.id, AdminCommand::descriptions()).await?;
+                                Ok(())
+                            }
+                            AdminCommand::Print => {
+                                info!("Handling print request");
+                                let spam_db = SPAM.get().unwrap().clone();
+                                let mut final_msg = String::from("The list of spam phrases are:\n");
+                                let mut count = 1;
+                                for spam_str in spam_db {
+                                    final_msg.push_str(format!("{:<3} \"{}\"", &count, &spam_str).as_str());
+                                    count += 1;
+                                }
+                                bot.send_message(msg.chat.id, final_msg).await?;
+                                Ok(())
+                            }
+                        }
+                    },
+                ),
+        )
         .branch(Update::filter_edited_message().endpoint(
-            |update: Update, bot: AutoSend<Bot>| async move {
+            |update: Update, bot: AutoSend<Bot>, lock: Arc<RwLock<HashSet<String>>>| async move {
                 debug!("Received a message edit.");
-                if let EditedMessage(message) = update.kind {
-                    handle_message(&message, &bot).await;
+                if let UpdateKind::EditedMessage(message) = update.kind {
+                    handle_message(&message, &bot, lock).await;
                 }
                 respond(())
             }
         ))
         .branch(Update::filter_message().endpoint(
-            |update: Update, bot: AutoSend<Bot>| async move {
+            |update: Update, bot: AutoSend<Bot>, lock: Arc<RwLock<HashSet<String>>>| async move {
                 debug!("Received a normal message.");
                 if let UpdateKind::Message(message) = update.kind {
-                    handle_message(&message, &bot).await;
+                    handle_message(&message, &bot, lock).await;
                 }
                 respond(())
             }
@@ -87,6 +166,7 @@ async fn main() {
         ;
 
     Dispatcher::builder(bot, handler)
+        .dependencies(dptree::deps![spam_set_lock])
         .build()
         .setup_ctrlc_handler()
         .dispatch().await;
@@ -111,8 +191,8 @@ fn get_spam_from_env() {
     SPAM.set(spam_db).unwrap();
 }
 
-#[allow(dead_code)]
 fn get_admin_from_env() {
+    info!("loading admin db");
     let env_key = "ANTI_SPAM_BOT_ADMIN";
     let mut admin_db = HashSet::new();
     let admin_str = match env::var_os(&env_key) {
@@ -135,17 +215,23 @@ fn get_admin_from_env() {
 
 fn get_env() {
     info!("loading env");
-    // get_admin_from_env();
+    get_admin_from_env();
     get_spam_from_env();
 }
 
-#[allow(dead_code)]
 fn is_admin(user_id: i64) -> bool {
     let admin_db = ADMIN.get().unwrap().clone();
 
     if admin_db.contains(&user_id) {
         info!("Admin {:?} confirmed", &user_id);
         return true
+    }
+    false
+}
+
+fn is_from_admin(message: &Message) -> bool {
+    if let Some(user) = message.from() {
+        return is_admin(user.id)
     }
     false
 }
