@@ -7,6 +7,7 @@ use teloxide::types::{
     UpdateKind,
     MessageKind,
     MediaKind,
+    ChatMember,
 };
 use teloxide::utils::command::BotCommand;
 
@@ -34,7 +35,7 @@ async fn is_spam(ss: &str, lock: Arc<RwLock<HashSet<String>>>) -> bool {
     false
 }
 
-#[derive(BotCommand, Clone)]
+#[derive(BotCommand, Clone, Debug)]
 #[command(rename = "lowercase", description = "Admin commands")]
 enum AdminCommand {
     #[command(description = "Add a new blocked phrase")]
@@ -77,6 +78,29 @@ async fn handle_message(message: &Message, bot: &AutoSend<Bot>, lock: Arc<RwLock
     }
 }
 
+
+async fn send_msg_auto_delete(bot: &AutoSend<Bot>, chat_id: i64, ss: &str) {
+    let check_wait_duration = tokio::time::Duration::from_secs(30);
+    match bot.send_message(chat_id, ss).await {
+        Ok(msg) => {
+            info!("before sleep");
+            tokio::time::sleep(check_wait_duration).await;
+            info!("after sleep");
+            match bot.delete_message(msg.chat.id, msg.id).await {
+                Ok(_) => {
+                    info!("Message deleted successfully");
+                },
+                Err(e) => {
+                    warn!("Message delete failed due to {:?}", &e);
+                }
+            }
+        },
+        Err(e) => {
+            warn!("Message failed to send due to {:?}", &e);
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -89,59 +113,60 @@ async fn main() {
 
     let handler = dptree::entry()
         .branch(
+            Update::filter_message()
             // Filter a maintainer by a used ID.
-            dptree::filter(|msg: Message| {
-                // msg.from().map(|user| user.id == cfg.bot_maintainer).unwrap_or_default()
-                is_from_admin(&msg)
-            })
                 .filter_command::<AdminCommand>()
                 .endpoint(
                     |msg: Message, bot: AutoSend<Bot>, cmd: AdminCommand, lock: Arc<RwLock<HashSet<String>>>| async move {
+                        debug!("Here");
+                        debug!("cmd is {:?}", &cmd);
+                        if !is_from_admin(&msg, &bot).await {
+                            warn!("Not from admin");
+                            return Ok(())
+                        }
+                        let mut final_msg;
                         match cmd {
                             AdminCommand::Add(ss) => {
                                 {
                                     let mut w = lock.write().await;
                                     w.insert(ss.clone());
+                                    debug!("w is {:?}", *w);
                                 }
-                                bot.send_message(msg.chat.id,
-                                                 format!("SPAM phrarse {} added to the database. \
-                                                          If you added it by mistake, please delete it using the \"\\delete\" command",
-                                                         &ss).as_str()).await?;
-                                Ok(())
+                                info!("SPAM phrase {} added to the database", &ss);
+                                final_msg = format!("SPAM phrarse \"{}\" added to the database.", &ss);
                             }
                             AdminCommand::Remove(ss) => {
-                                let final_msg;
                                 {
                                     let mut w = lock.write().await;
                                     if w.contains(&ss) {
                                         w.remove(&ss);
-                                        final_msg = format!("SPAM phrarse {} removed from the database", &ss)
+                                        final_msg = format!("SPAM phrarse \"{}\" removed from the database", &ss)
                                     } else {
-                                        final_msg = String::from("SPAM phrase not found in the database. \
-                                                                 Please use \"\\print\" to show a list of spam phrases");
+                                        final_msg = format!("SPAM phrase \"{}\" not found in the database. \
+                                                             Use \"\\print\" to show a list of spam phrases", &ss);
                                     }
                                 }
-                                bot.send_message(msg.chat.id, &final_msg).await?;
-                                Ok(())
+                                info!("SPAM phrase {} removed from the database", &ss);
                             }
                             AdminCommand::Help => {
                                 info!("Handling help request");
-                                bot.send_message(msg.chat.id, AdminCommand::descriptions()).await?;
-                                Ok(())
+                                final_msg = AdminCommand::descriptions();
                             }
                             AdminCommand::Print => {
                                 info!("Handling print request");
-                                let spam_db = SPAM.get().unwrap().clone();
-                                let mut final_msg = String::from("The list of spam phrases are:\n");
+                                final_msg = String::from("The list of spam phrases are:\n");
                                 let mut count = 1;
-                                for spam_str in spam_db {
-                                    final_msg.push_str(format!("{:<3} \"{}\"", &count, &spam_str).as_str());
-                                    count += 1;
+                                {
+                                    let spam_db = lock.read().await;
+                                    for spam_str in &*spam_db {
+                                        final_msg.push_str(format!("{:<3} \"{}\"\n", &count, &spam_str).as_str());
+                                        count += 1;
+                                    }
                                 }
-                                bot.send_message(msg.chat.id, final_msg).await?;
-                                Ok(())
                             }
                         }
+                        send_msg_auto_delete(&bot, msg.chat.id, &final_msg).await;
+                        Ok(())
                     },
                 ),
         )
@@ -219,6 +244,7 @@ fn get_env() {
     get_spam_from_env();
 }
 
+#[allow(dead_code)]
 fn is_admin(user_id: i64) -> bool {
     let admin_db = ADMIN.get().unwrap().clone();
 
@@ -229,9 +255,18 @@ fn is_admin(user_id: i64) -> bool {
     false
 }
 
-fn is_from_admin(message: &Message) -> bool {
+async fn is_from_admin(message: &Message, bot: &AutoSend<Bot>) -> bool {
     if let Some(user) = message.from() {
-        return is_admin(user.id)
+         match bot.get_chat_member(message.chat_id(), user.id).send().await {
+            Ok(ChatMember{user, kind}) => {
+                debug!("user is {:?}", &user);
+                debug!("kind is {:?}", &kind);
+                return kind.is_privileged();
+            }
+            Err(e) => {
+                debug!("get error {:?}", &e)
+            }
+        }
     }
     false
 }
