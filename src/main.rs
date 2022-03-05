@@ -23,6 +23,8 @@ use tracing_subscriber;
 static ADMIN: OnceCell<HashSet<i64>> = OnceCell::new();
 static SPAM: OnceCell<HashSet<String>> = OnceCell::new();
 
+static BOT_NAME: &str = "simple_anti_spam_bot";
+
 async fn is_spam(ss: &str, lock: Arc<RwLock<HashSet<String>>>) -> bool {
     // let spam_db = SPAM.get().unwrap().clone();
     let spam_db = lock.read().await;
@@ -68,7 +70,7 @@ async fn handle_message(message: &Message, bot: &AutoSend<Bot>, lock: Arc<RwLock
                              .revoke_messages(true).await
                     {
                         Ok(_) => warn!("User {:?} revoked", &user_id.id),
-                        Err(e) => info!("Revoke message by user {:?} failed with error {:?}", user_id, &e)
+                        Err(e) => info!("Kick user {:?} failed with error {:?}", user_id, &e)
                     }
                 } else {
                     warn!("could not find")
@@ -79,21 +81,29 @@ async fn handle_message(message: &Message, bot: &AutoSend<Bot>, lock: Arc<RwLock
 }
 
 
-async fn send_msg_auto_delete(bot: &AutoSend<Bot>, chat_id: i64, ss: &str) {
-    let check_wait_duration = tokio::time::Duration::from_secs(30);
-    match bot.send_message(chat_id, ss).await {
-        Ok(msg) => {
-            info!("before sleep");
-            tokio::time::sleep(check_wait_duration).await;
-            info!("after sleep");
-            match bot.delete_message(msg.chat.id, msg.id).await {
-                Ok(_) => {
-                    info!("Message deleted successfully");
-                },
-                Err(e) => {
-                    warn!("Message delete failed due to {:?}", &e);
-                }
-            }
+async fn send_msg_auto_delete(bot: &AutoSend<Bot>, msg: &Message, ss: &str) {
+    let _check_wait_duration = tokio::time::Duration::from_secs(30);
+    match bot.delete_message(msg.chat.id, msg.id).await {
+        Ok(_) => {
+            debug!("User command deleted successfully");
+        },
+        Err(e) => {
+            debug!("Failed to delete user command due to {:?}", &e);
+        }
+    }
+    match bot.send_message(msg.chat.id, ss).await {
+        Ok(_msg) => {
+            // info!("before sleep");
+            // tokio::time::sleep(check_wait_duration).await;
+            // info!("after sleep");
+            // match bot.delete_message(msg.chat.id, msg.id).await {
+            //     Ok(_) => {
+            //         info!("Message deleted successfully");
+            //     },
+            //     Err(e) => {
+            //         warn!("Message delete failed due to {:?}", &e);
+            //     }
+            // }
         },
         Err(e) => {
             warn!("Message failed to send due to {:?}", &e);
@@ -106,7 +116,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
     get_env();
     let spam_set_lock = Arc::new(RwLock::new(SPAM.get().unwrap().clone()));
-    info!("Starting shared_state_bot...");
+    info!("Starting {}...", &BOT_NAME);
 
     let bot = Bot::from_env().auto_send();
 
@@ -118,22 +128,48 @@ async fn main() {
                 .filter_command::<AdminCommand>()
                 .endpoint(
                     |msg: Message, bot: AutoSend<Bot>, cmd: AdminCommand, lock: Arc<RwLock<HashSet<String>>>| async move {
-                        debug!("Here");
                         debug!("cmd is {:?}", &cmd);
                         if !is_from_admin(&msg, &bot).await {
                             warn!("Not from admin");
                             return Ok(())
                         }
+                        debug!("is admin");
+                        match &msg.kind {
+                            MessageKind::Common(msg) => {
+                                if let MediaKind::Text(msg) = &msg.media_kind {
+                                    let text = &msg.text;
+                                    let bot_name_str =  format!("@{}", &BOT_NAME);
+                                    debug!("text {} contains {} gets {}", &text, &bot_name_str, text.contains(&bot_name_str));
+                                    if !text.contains(&bot_name_str) {
+                                        return Ok(())
+                                    }
+                                } else {
+                                    return Ok(())
+                                }
+                            },
+                            _ => {
+                                return Ok(())
+                            }
+                        }
                         let mut final_msg;
                         match cmd {
                             AdminCommand::Add(ss) => {
-                                {
-                                    let mut w = lock.write().await;
-                                    w.insert(ss.clone());
-                                    debug!("w is {:?}", *w);
+                                let ss = ss.trim();
+                                if ss.is_empty() {
+                                    final_msg = format!("Input is empty")
+                                } else {
+                                    if ss.len() < 3 {
+                                        final_msg = format!("SPAM phrase needs to be at least 3 bytes long");
+                                    } else {
+                                        {
+                                            let mut w = lock.write().await;
+                                            w.insert(String::from(ss));
+                                            debug!("w is {:?}", *w);
+                                        }
+                                        info!("SPAM phrase {} added to the database", &ss);
+                                        final_msg = format!("SPAM phrarse \"{}\" added to the database.", &ss);
+                                    }
                                 }
-                                info!("SPAM phrase {} added to the database", &ss);
-                                final_msg = format!("SPAM phrarse \"{}\" added to the database.", &ss);
                             }
                             AdminCommand::Remove(ss) => {
                                 {
@@ -165,7 +201,7 @@ async fn main() {
                                 }
                             }
                         }
-                        send_msg_auto_delete(&bot, msg.chat.id, &final_msg).await;
+                        send_msg_auto_delete(&bot, &msg, &final_msg).await;
                         Ok(())
                     },
                 ),
@@ -216,6 +252,7 @@ fn get_spam_from_env() {
     SPAM.set(spam_db).unwrap();
 }
 
+#[allow(dead_code)]
 fn get_admin_from_env() {
     info!("loading admin db");
     let env_key = "ANTI_SPAM_BOT_ADMIN";
@@ -240,7 +277,7 @@ fn get_admin_from_env() {
 
 fn get_env() {
     info!("loading env");
-    get_admin_from_env();
+    // get_admin_from_env();
     get_spam_from_env();
 }
 
@@ -258,8 +295,8 @@ fn is_admin(user_id: i64) -> bool {
 async fn is_from_admin(message: &Message, bot: &AutoSend<Bot>) -> bool {
     if let Some(user) = message.from() {
          match bot.get_chat_member(message.chat_id(), user.id).send().await {
-            Ok(ChatMember{user, kind}) => {
-                debug!("user is {:?}", &user);
+            Ok(ChatMember{_user, kind}) => {
+                // debug!("user is {:?}", &user);
                 debug!("kind is {:?}", &kind);
                 return kind.is_privileged();
             }
