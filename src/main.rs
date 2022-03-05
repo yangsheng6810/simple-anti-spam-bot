@@ -179,7 +179,7 @@ async fn main() {
                                         final_msg = format!("SPAM phrarse \"{}\" removed from the database", &ss)
                                     } else {
                                         final_msg = format!("SPAM phrase \"{}\" not found in the database. \
-                                                             Use \"\\print\" to show a list of spam phrases", &ss);
+                                                             Use \"/print\" to show a list of spam phrases", &ss);
                                     }
                                 }
                                 info!("SPAM phrase {} removed from the database", &ss);
@@ -295,7 +295,7 @@ fn is_admin(user_id: i64) -> bool {
 async fn is_from_admin(message: &Message, bot: &AutoSend<Bot>) -> bool {
     if let Some(user) = message.from() {
          match bot.get_chat_member(message.chat_id(), user.id).send().await {
-            Ok(ChatMember{_user, kind}) => {
+            Ok(ChatMember{user:_, kind}) => {
                 // debug!("user is {:?}", &user);
                 debug!("kind is {:?}", &kind);
                 return kind.is_privileged();
