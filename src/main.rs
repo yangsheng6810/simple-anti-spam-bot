@@ -81,8 +81,8 @@ async fn handle_message(message: &Message, bot: &AutoSend<Bot>, lock: Arc<RwLock
 }
 
 
-async fn send_msg_auto_delete(bot: &AutoSend<Bot>, msg: &Message, ss: &str) {
-    let _check_wait_duration = tokio::time::Duration::from_secs(30);
+async fn send_msg_auto_delete(bot: AutoSend<Bot>, msg: Message, ss: &str) {
+    let check_wait_duration = tokio::time::Duration::from_secs(30);
     match bot.delete_message(msg.chat.id, msg.id).await {
         Ok(_) => {
             debug!("User command deleted successfully");
@@ -92,18 +92,18 @@ async fn send_msg_auto_delete(bot: &AutoSend<Bot>, msg: &Message, ss: &str) {
         }
     }
     match bot.send_message(msg.chat.id, ss).await {
-        Ok(_msg) => {
-            // info!("before sleep");
-            // tokio::time::sleep(check_wait_duration).await;
-            // info!("after sleep");
-            // match bot.delete_message(msg.chat.id, msg.id).await {
-            //     Ok(_) => {
-            //         info!("Message deleted successfully");
-            //     },
-            //     Err(e) => {
-            //         warn!("Message delete failed due to {:?}", &e);
-            //     }
-            // }
+        Ok(msg) => {
+            tokio::spawn(async move {
+                tokio::time::sleep(check_wait_duration).await;
+                match bot.delete_message(msg.chat.id, msg.id).await {
+                    Ok(_) => {
+                        info!("Message deleted successfully");
+                    },
+                    Err(e) => {
+                        warn!("Message delete failed due to {:?}", &e);
+                    }
+                }
+            });
         },
         Err(e) => {
             warn!("Message failed to send due to {:?}", &e);
@@ -201,7 +201,7 @@ async fn main() {
                                 }
                             }
                         }
-                        send_msg_auto_delete(&bot, &msg, &final_msg).await;
+                        send_msg_auto_delete(bot, msg, &final_msg).await;
                         Ok(())
                     },
                 ),
