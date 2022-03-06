@@ -93,9 +93,11 @@ async fn send_msg_auto_delete(bot: AutoSend<Bot>, msg: Message, ss: &str) {
     }
     match bot.send_message(msg.chat.id, ss).await {
         Ok(msg) => {
+            let chat_id = msg.chat.id;
+            let msg_id = msg.id;
             tokio::spawn(async move {
                 tokio::time::sleep(check_wait_duration).await;
-                match bot.delete_message(msg.chat.id, msg.id).await {
+                match bot.delete_message(chat_id, msg_id).await {
                     Ok(_) => {
                         info!("Message deleted successfully");
                     },
