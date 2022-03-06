@@ -124,24 +124,23 @@ async fn main() {
 
 
     let handler = dptree::entry()
-        .branch(
-            Update::filter_message()
+        .branch(Update::filter_message()
             // Filter a maintainer by a used ID.
                 .filter_command::<AdminCommand>()
                 .endpoint(
                     |msg: Message, bot: AutoSend<Bot>, cmd: AdminCommand, lock: Arc<RwLock<HashSet<String>>>| async move {
-                        debug!("cmd is {:?}", &cmd);
+                        debug!("Received command {:?}", &cmd);
                         if !is_from_admin(&msg, &bot).await {
                             warn!("Not from admin");
                             return Ok(())
                         }
-                        debug!("is admin");
+                        debug!("Command is from an admin");
                         match &msg.kind {
                             MessageKind::Common(msg) => {
                                 if let MediaKind::Text(msg) = &msg.media_kind {
                                     let text = &msg.text;
                                     let bot_name_str =  format!("@{}", &BOT_NAME);
-                                    debug!("text {} contains {} gets {}", &text, &bot_name_str, text.contains(&bot_name_str));
+                                    // debug!("text {} contains {} gets {}", &text, &bot_name_str, text.contains(&bot_name_str));
                                     if !text.contains(&bot_name_str) {
                                         return Ok(())
                                     }
@@ -164,9 +163,9 @@ async fn main() {
                                         final_msg = format!("SPAM phrase needs to be at least 3 bytes long");
                                     } else {
                                         {
-                                            let mut w = lock.write().await;
-                                            w.insert(String::from(ss));
-                                            debug!("w is {:?}", *w);
+                                            let mut spam_db = lock.write().await;
+                                            spam_db.insert(String::from(ss));
+                                            debug!("Updated SPAM database is {:?}", *spam_db);
                                         }
                                         info!("SPAM phrase {} added to the database", &ss);
                                         final_msg = format!("SPAM phrarse \"{}\" added to the database.", &ss);
@@ -178,13 +177,14 @@ async fn main() {
                                     let mut w = lock.write().await;
                                     if w.contains(&ss) {
                                         w.remove(&ss);
-                                        final_msg = format!("SPAM phrarse \"{}\" removed from the database", &ss)
+                                        final_msg = format!("SPAM phrarse \"{}\" removed from the database", &ss);
+                                        info!("SPAM phrase {} removed from the database", &ss);
                                     } else {
                                         final_msg = format!("SPAM phrase \"{}\" not found in the database. \
                                                              Use \"/print\" to show a list of spam phrases", &ss);
+                                        info!("No SPAM phras was removed from the database");
                                     }
                                 }
-                                info!("SPAM phrase {} removed from the database", &ss);
                             }
                             AdminCommand::Help => {
                                 info!("Handling help request");
@@ -206,8 +206,7 @@ async fn main() {
                         send_msg_auto_delete(bot, msg, &final_msg).await;
                         Ok(())
                     },
-                ),
-        )
+                ))
         .branch(Update::filter_edited_message().endpoint(
             |update: Update, bot: AutoSend<Bot>, lock: Arc<RwLock<HashSet<String>>>| async move {
                 trace!("Received a message edit.");
@@ -225,8 +224,7 @@ async fn main() {
                 }
                 respond(())
             }
-            ,))
-        ;
+        ));
 
     Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![spam_set_lock])
