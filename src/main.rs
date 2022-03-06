@@ -20,7 +20,6 @@ use std::env;
 use tracing::{trace, debug, info, warn};
 use tracing_subscriber;
 
-static ADMIN: OnceCell<HashSet<i64>> = OnceCell::new();
 static SPAM: OnceCell<HashSet<String>> = OnceCell::new();
 
 static BOT_NAME: &str = "simple_anti_spam_bot";
@@ -255,44 +254,9 @@ fn get_spam_from_env() {
     SPAM.set(spam_db).unwrap();
 }
 
-#[allow(dead_code)]
-fn get_admin_from_env() {
-    info!("loading admin db");
-    let env_key = "ANTI_SPAM_BOT_ADMIN";
-    let mut admin_db = HashSet::new();
-    let admin_str = match env::var_os(&env_key) {
-        Some(v) => v.into_string().unwrap(),
-        None => {
-            warn!("${} is not set", &env_key);
-            String::from("0")
-        }
-    };
-    for id in admin_str.split(":"){
-        let admin = match id.parse::<i64>() {
-            Ok(id) => id,
-            Err(_) => 0
-        };
-        admin_db.insert(admin);
-    }
-    // only set once, so will never fail
-    ADMIN.set(admin_db).unwrap();
-}
-
 fn get_env() {
     info!("loading env");
-    // get_admin_from_env();
     get_spam_from_env();
-}
-
-#[allow(dead_code)]
-fn is_admin(user_id: i64) -> bool {
-    let admin_db = ADMIN.get().unwrap().clone();
-
-    if admin_db.contains(&user_id) {
-        info!("Admin {:?} confirmed", &user_id);
-        return true
-    }
-    false
 }
 
 async fn is_from_admin(message: &Message, bot: &AutoSend<Bot>) -> bool {
