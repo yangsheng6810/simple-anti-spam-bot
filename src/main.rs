@@ -52,12 +52,13 @@ enum AdminCommand {
 
 async fn handle_message(message: &Message, bot: &AutoSend<Bot>, lock: Arc<RwLock<HashSet<String>>>) {
     let message_id = message.id.clone();
-    debug!("message id {:?}", &message_id);
     let chat_id = message.chat.id.clone();
-    debug!("chat id {:?}", &chat_id);
     if let MessageKind::Common(msg) = message.kind.clone() {
         if let MediaKind::Text(msg_text) = msg.media_kind {
-            debug!("text is {:?}", &msg_text.text);
+            trace!("text is {:?}", &msg_text.text);
+            if msg_text.text.len() > 100 {
+                debug!("text is {:?}", &msg_text.text);
+            }
             let content = msg_text.text.clone();
             if is_spam(&content, lock).await {
                 warn!("SPAM found and deleted! Text is {:?}", &msg_text.text);
@@ -210,7 +211,7 @@ async fn main() {
         )
         .branch(Update::filter_edited_message().endpoint(
             |update: Update, bot: AutoSend<Bot>, lock: Arc<RwLock<HashSet<String>>>| async move {
-                debug!("Received a message edit.");
+                trace!("Received a message edit.");
                 if let UpdateKind::EditedMessage(message) = update.kind {
                     handle_message(&message, &bot, lock).await;
                 }
@@ -219,7 +220,7 @@ async fn main() {
         ))
         .branch(Update::filter_message().endpoint(
             |update: Update, bot: AutoSend<Bot>, lock: Arc<RwLock<HashSet<String>>>| async move {
-                debug!("Received a normal message.");
+                trace!("Received a normal message.");
                 if let UpdateKind::Message(message) = update.kind {
                     handle_message(&message, &bot, lock).await;
                 }
@@ -298,8 +299,6 @@ async fn is_from_admin(message: &Message, bot: &AutoSend<Bot>) -> bool {
     if let Some(user) = message.from() {
          match bot.get_chat_member(message.chat_id(), user.id).send().await {
             Ok(ChatMember{user:_, kind}) => {
-                // debug!("user is {:?}", &user);
-                debug!("kind is {:?}", &kind);
                 return kind.is_privileged();
             }
             Err(e) => {
