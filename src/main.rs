@@ -16,8 +16,11 @@ use std::sync::Arc;
 use once_cell::sync::OnceCell;
 use std::collections::HashSet;
 use std::env;
+use std::fs::File;
+use std::io::prelude::*;
+use std::io::{BufRead, BufReader};
 
-use tracing::{trace, debug, info, warn};
+use tracing::{trace, debug, info, warn, error};
 use tracing_subscriber;
 
 static SPAM: OnceCell<HashSet<String>> = OnceCell::new();
@@ -227,10 +230,12 @@ async fn main() {
         ));
 
     Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![spam_set_lock])
+        .dependencies(dptree::deps![spam_set_lock.clone()])
         .build()
         .setup_ctrlc_handler()
         .dispatch().await;
+
+    save_database(&*spam_set_lock.read().await);
 }
 
 fn get_spam_from_env() {
@@ -269,4 +274,51 @@ async fn is_from_admin(message: &Message, bot: &AutoSend<Bot>) -> bool {
         }
     }
     false
+}
+
+fn save_database(spam_db: &HashSet<String>) {
+    let file_name = String::from("env.sh");
+    let env_key = "SPAM_STR";
+    let starts_with_str = format!("export {}=", &env_key);
+
+    let mut final_str = String::from("");
+    let spam_str = spam_db.clone().into_iter().collect::<Vec<String>>().join(":");
+    let mut read_successfully = false;
+    match File::open(&file_name) {
+        Ok(f) => {
+            let f = BufReader::new(f);
+            for line in f.lines() {
+                match line {
+                    Ok(line) => if line.starts_with(&starts_with_str) {
+                        final_str.push_str(format!("export {}=\"{}\"", &env_key, &spam_str).as_str())
+                    } else {
+                        final_str.push_str(format!("{}\n", &line).as_str());
+                    },
+                    Err(e) => error!("Error reading file: {}", e)
+                }
+            }
+            read_successfully = true;
+            // println!("{}", final_str);
+        },
+        Err(e) => {
+            error!("Failed to read file: {}", e);
+        }
+    }
+    if read_successfully {
+        // Open a file in write-only mode, returns `io::Result<File>`
+        match File::create(&file_name) {
+            Ok(mut file) => {
+                match file.write_all(final_str.as_bytes()) {
+                    Err(why) => {
+                        error!("Couldn't write to {}: {}", &file_name, why);
+                        error!("May need to update manually: {}", &final_str);
+                    },
+                    Ok(_) => info!("{} updated successfully", &file_name),
+                }
+            },
+            Err(why) => error!("Couldn't create {}: {}", &file_name, why),
+        };
+    } else {
+        error!("May need to update {} manually: {}", &file_name, &final_str);
+    }
 }
