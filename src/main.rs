@@ -20,7 +20,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::io::{BufRead, BufReader};
 
-use tracing::{trace, debug, info, warn, error};
+use tracing::{trace, debug, info, warn, error, span, Level, Instrument};
 use tracing_subscriber;
 
 static SPAM: OnceCell<HashSet<String>> = OnceCell::new();
@@ -83,7 +83,6 @@ async fn handle_message(message: &Message, bot: &AutoSend<Bot>, lock: Arc<RwLock
     }
 }
 
-
 async fn send_msg_auto_delete(bot: AutoSend<Bot>, msg: Message, ss: &str) {
     let check_wait_duration = tokio::time::Duration::from_secs(30);
     match bot.delete_message(msg.chat.id, msg.id).await {
@@ -108,7 +107,7 @@ async fn send_msg_auto_delete(bot: AutoSend<Bot>, msg: Message, ss: &str) {
                         warn!("Message delete failed due to {:?}", &e);
                     }
                 }
-            });
+            }.in_current_span()); // prepare the current span to make tracing happy
         },
         Err(e) => {
             warn!("Message failed to send due to {:?}", &e);
@@ -132,81 +131,88 @@ async fn main() {
                 .filter_command::<AdminCommand>()
                 .endpoint(
                     |msg: Message, bot: AutoSend<Bot>, cmd: AdminCommand, lock: Arc<RwLock<HashSet<String>>>| async move {
-                        debug!("Received command {:?}", &cmd);
-                        if !is_from_admin(&msg, &bot).await {
-                            warn!("Not from admin");
-                            return Ok(())
-                        }
-                        debug!("Command is from an admin");
-                        match &msg.kind {
-                            MessageKind::Common(msg) => {
-                                if let MediaKind::Text(msg) = &msg.media_kind {
-                                    let text = &msg.text;
-                                    let bot_name_str =  format!("@{}", &BOT_NAME);
-                                    // debug!("text {} contains {} gets {}", &text, &bot_name_str, text.contains(&bot_name_str));
-                                    if !text.contains(&bot_name_str) {
-                                        return Ok(())
-                                    }
-                                } else {
-                                    return Ok(())
-                                }
-                            },
-                            _ => {
-                                return Ok(())
+                        let group_id = msg.chat_id();
+                        let group_title = msg.chat.title();
+                        let group_span = span!(Level::INFO, "group", id = &group_id, name = &group_title);
+
+                        async {
+                            debug!("Received command {:?}", &cmd);
+                            if !is_from_admin(&msg, &bot).await {
+                                warn!("Not from admin");
+                                return
                             }
-                        }
-                        let mut final_msg;
-                        match cmd {
-                            AdminCommand::Add(ss) => {
-                                let ss = ss.trim();
-                                if ss.is_empty() {
-                                    final_msg = format!("Input is empty")
-                                } else {
-                                    if ss.len() < 3 {
-                                        final_msg = format!("SPAM phrase needs to be at least 3 bytes long");
-                                    } else {
-                                        {
-                                            let mut spam_db = lock.write().await;
-                                            spam_db.insert(String::from(ss));
-                                            debug!("Updated SPAM database is {:?}", *spam_db);
+                            debug!("Command is from an admin");
+                            match &msg.kind {
+                                MessageKind::Common(msg) => {
+                                    if let MediaKind::Text(msg) = &msg.media_kind {
+                                        let text = &msg.text;
+                                        let bot_name_str =  format!("@{}", &BOT_NAME);
+                                        // debug!("text {} contains {} gets {}", &text, &bot_name_str, text.contains(&bot_name_str));
+                                        if !text.contains(&bot_name_str) {
+                                            return
                                         }
-                                        info!("SPAM phrase {} added to the database", &ss);
-                                        final_msg = format!("SPAM phrarse \"{}\" added to the database.", &ss);
-                                    }
-                                }
-                            }
-                            AdminCommand::Remove(ss) => {
-                                {
-                                    let mut w = lock.write().await;
-                                    if w.contains(&ss) {
-                                        w.remove(&ss);
-                                        final_msg = format!("SPAM phrarse \"{}\" removed from the database", &ss);
-                                        info!("SPAM phrase {} removed from the database", &ss);
                                     } else {
-                                        final_msg = format!("SPAM phrase \"{}\" not found in the database. \
-                                                             Use \"/print\" to show a list of spam phrases", &ss);
-                                        info!("No SPAM phras was removed from the database");
+                                        return
+                                    }
+                                },
+                                _ => {
+                                    return
+                                }
+                            }
+                            let mut final_msg;
+                            match cmd {
+                                AdminCommand::Add(ss) => {
+                                    let ss = ss.trim();
+                                    if ss.is_empty() {
+                                        final_msg = format!("Input is empty");
+                                    } else {
+                                        if ss.len() < 3 {
+                                            final_msg = format!("SPAM phrase needs to be at least 3 bytes long");
+                                        } else {
+                                            {
+                                                let mut spam_db = lock.write().await;
+                                                spam_db.insert(String::from(ss));
+                                                debug!("Updated SPAM database is {:?}", *spam_db);
+                                            }
+                                            info!("SPAM phrase {} added to the database", &ss);
+                                            final_msg = format!("SPAM phrarse \"{}\" added to the database.", &ss);
+                                        }
+                                    }
+                                }
+                                AdminCommand::Remove(ss) => {
+                                    {
+                                        let mut w = lock.write().await;
+                                        if w.contains(&ss) {
+                                            w.remove(&ss);
+                                            final_msg = format!("SPAM phrarse \"{}\" removed from the database", &ss);
+                                            info!("SPAM phrase {} removed from the database", &ss);
+                                        } else {
+                                            final_msg = format!("SPAM phrase \"{}\" not found in the database. \
+                                                                 Use \"/print\" to show a list of spam phrases", &ss);
+                                            info!("No SPAM phras was removed from the database");
+                                        }
+                                    }
+                                }
+                                AdminCommand::Help => {
+                                    info!("Handling help request");
+                                    final_msg = AdminCommand::descriptions();
+                                }
+                                AdminCommand::Print => {
+                                    info!("Handling print request");
+                                    final_msg = String::from("The list of spam phrases are:\n");
+                                    let mut count = 1;
+                                    {
+                                        let spam_db = lock.read().await;
+                                        for spam_str in &*spam_db {
+                                            final_msg.push_str(format!("{:<3} \"{}\"\n", &count, &spam_str).as_str());
+                                            count += 1;
+                                        }
                                     }
                                 }
                             }
-                            AdminCommand::Help => {
-                                info!("Handling help request");
-                                final_msg = AdminCommand::descriptions();
-                            }
-                            AdminCommand::Print => {
-                                info!("Handling print request");
-                                final_msg = String::from("The list of spam phrases are:\n");
-                                let mut count = 1;
-                                {
-                                    let spam_db = lock.read().await;
-                                    for spam_str in &*spam_db {
-                                        final_msg.push_str(format!("{:<3} \"{}\"\n", &count, &spam_str).as_str());
-                                        count += 1;
-                                    }
-                                }
-                            }
-                        }
-                        send_msg_auto_delete(bot, msg, &final_msg).await;
+                            send_msg_auto_delete(bot, msg, &final_msg).await;
+                        }.instrument(group_span).await;
+
                         Ok(())
                     },
                 ))
