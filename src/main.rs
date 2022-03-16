@@ -91,7 +91,7 @@ async fn send_msg_auto_delete(bot: AutoSend<Bot>, msg: Message, ss: &str) {
     let check_wait_duration = tokio::time::Duration::from_secs(30);
     match bot.delete_message(msg.chat.id, msg.id).await {
         Ok(_) => {
-            debug!("User command deleted successfully");
+            trace!("User command deleted successfully");
         },
         Err(e) => {
             debug!("Failed to delete user command due to {:?}", &e);
@@ -105,7 +105,7 @@ async fn send_msg_auto_delete(bot: AutoSend<Bot>, msg: Message, ss: &str) {
                 tokio::time::sleep(check_wait_duration).await;
                 match bot.delete_message(chat_id, msg_id).await {
                     Ok(_) => {
-                        info!("Message deleted successfully");
+                        trace!("Message deleted successfully");
                     },
                     Err(e) => {
                         warn!("Message delete failed due to {:?}", &e);
@@ -140,12 +140,12 @@ async fn main() {
                         let group_span = span!(Level::INFO, "group", id = &group_id, name = &group_title);
 
                         async {
-                            debug!("Received command {:?}", &cmd);
+                            info!("Received command {:?}", &cmd);
                             if !is_from_admin(&msg, &bot).await {
                                 warn!("Not from admin");
                                 return
                             }
-                            debug!("Command is from an admin");
+                            trace!("Command is from an admin");
                             match &msg.kind {
                                 MessageKind::Common(msg) => {
                                     if let MediaKind::Text(msg) = &msg.media_kind {
@@ -260,7 +260,7 @@ fn get_spam_from_env() {
         }
     };
     for spam_str in spam_str.split(":"){
-        info!("spam string {:?} added to database", &spam_str);
+        debug!("spam string {:?} added to database", &spam_str);
         spam_db.insert(String::from(spam_str));
     }
     // only set once, so will never fail
