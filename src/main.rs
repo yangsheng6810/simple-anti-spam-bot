@@ -135,7 +135,7 @@ async fn main() {
                 .filter_command::<AdminCommand>()
                 .endpoint(
                     |msg: Message, bot: AutoSend<Bot>, cmd: AdminCommand, lock: Arc<RwLock<HashSet<String>>>| async move {
-                        let group_id = msg.chat_id();
+                        let group_id = msg.chat.id;
                         let group_title = msg.chat.title();
                         let group_span = span!(Level::INFO, "group", id = &group_id, name = &group_title);
 
@@ -274,7 +274,7 @@ fn get_env() {
 
 async fn is_from_admin(message: &Message, bot: &AutoSend<Bot>) -> bool {
     if let Some(user) = message.from() {
-         match bot.get_chat_member(message.chat_id(), user.id).send().await {
+         match bot.get_chat_member(message.chat.id, user.id).send().await {
             Ok(ChatMember{user:_, kind}) => {
                 return kind.is_privileged();
             }
