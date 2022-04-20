@@ -33,6 +33,7 @@ async fn is_spam(ss: &str, lock: Arc<RwLock<HashSet<String>>>) -> bool {
     for spam_str in &*spam_db {
         trace!("Testing against spam str: {:?}", spam_str);
         if ss.contains(spam_str) {
+            warn!("SPAM found against {:?}! Text is {:?}", &spam_str, &ss);
             return true;
         }
     }
@@ -78,7 +79,6 @@ async fn handle_message(message: &Message, bot: &AutoSend<Bot>, lock: Arc<RwLock
                     }
                     let content = msg_text.text.clone();
                     if is_spam(&content, lock).await {
-                        warn!("SPAM found and deleted! Text is {:?}", &msg_text.text);
                         match bot.delete_message(chat_id, message_id).await {
                             Ok(_) => warn!("Message {:?} deleted", &message_id),
                             Err(e) => info!("Delete message {:?} failed with error {:?}", &message_id, &e)
@@ -99,6 +99,10 @@ async fn handle_message(message: &Message, bot: &AutoSend<Bot>, lock: Arc<RwLock
             MessageKind::NewChatMembers(members) => {
                 for member in members.new_chat_members {
                     debug!("New user added: {:?}", &member);
+                    if member.id == 5190417588 {
+                        // this bot
+                        warn!("Bot added to group!");
+                    }
                 }
             }
             _ => {
@@ -169,8 +173,11 @@ async fn main() {
                                 None
                             }
                         };
-
-                        let group_span = span!(Level::INFO, "command", id = &group_id, name = &group_title, by = &user, username = &username);
+                        let group_span = span!(Level::INFO, "command",
+                                               id = &group_id,
+                                               name = &group_title,
+                                               by = &user,
+                                               username = &username);
 
                         async {
                             info!("Received command {:?}", &cmd);
