@@ -56,32 +56,53 @@ async fn handle_message(message: &Message, bot: &AutoSend<Bot>, lock: Arc<RwLock
     let message_id = message.id.clone();
     let chat_id = message.chat.id.clone();
     let group_title = message.chat.title();
-    let group_span = span!(Level::INFO, "group", id = &chat_id, name = &group_title);
+    let username: Option<&str>;
+    let user = match message.from() {
+        Some(user) => {
+            username = Some(&user.first_name);
+            Some(user.id)
+        },
+        _ => {
+            username = None;
+            None
+        }
+    };
+    let group_span = span!(Level::INFO, "group", id = &chat_id, name = &group_title, by = &user, username = &username);
     async {
-        if let MessageKind::Common(msg) = message.kind.clone() {
-            if let MediaKind::Text(msg_text) = msg.media_kind {
-                trace!("text is {:?}", &msg_text.text);
-                if msg_text.text.len() > 100 {
-                    debug!("text is {:?}", &msg_text.text);
-                }
-                let content = msg_text.text.clone();
-                if is_spam(&content, lock).await {
-                    warn!("SPAM found and deleted! Text is {:?}", &msg_text.text);
-                    match bot.delete_message(chat_id, message_id).await {
-                        Ok(_) => warn!("Message {:?} deleted", &message_id),
-                        Err(e) => info!("Delete message {:?} failed with error {:?}", &message_id, &e)
+        match message.kind.clone() {
+            MessageKind::Common(msg) => {
+                if let MediaKind::Text(msg_text) = msg.media_kind {
+                    trace!("text is {:?}", &msg_text.text);
+                    if msg_text.text.len() > 100 {
+                        debug!("text is {:?}", &msg_text.text);
                     }
-                    if let Some(user_id) = msg.from {
-                        match bot.kick_chat_member(chat_id, user_id.id)
-                                 .revoke_messages(true).await
-                        {
-                            Ok(_) => warn!("User {:?} revoked", &user_id.id),
-                            Err(e) => info!("Kick user {:?} failed with error {:?}", user_id, &e)
+                    let content = msg_text.text.clone();
+                    if is_spam(&content, lock).await {
+                        warn!("SPAM found and deleted! Text is {:?}", &msg_text.text);
+                        match bot.delete_message(chat_id, message_id).await {
+                            Ok(_) => warn!("Message {:?} deleted", &message_id),
+                            Err(e) => info!("Delete message {:?} failed with error {:?}", &message_id, &e)
                         }
-                    } else {
-                        warn!("could not find")
-                    }
-                };
+                        if let Some(user_id) = msg.from {
+                            match bot.kick_chat_member(chat_id, user_id.id)
+                                     .revoke_messages(true).await
+                            {
+                                Ok(_) => warn!("User {:?} revoked", &user_id.id),
+                                Err(e) => info!("Kick user {:?} failed with error {:?}", user_id, &e)
+                            }
+                        } else {
+                            warn!("could not find")
+                        }
+                    };
+                }
+            }
+            MessageKind::NewChatMembers(members) => {
+                for member in members.new_chat_members {
+                    debug!("New user added: {:?}", &member);
+                }
+            }
+            _ => {
+                trace!("Unsupported message kind {:?}", message.kind);
             }
         }
     }.instrument(group_span).await;
@@ -137,7 +158,19 @@ async fn main() {
                     |msg: Message, bot: AutoSend<Bot>, cmd: AdminCommand, lock: Arc<RwLock<HashSet<String>>>| async move {
                         let group_id = msg.chat.id;
                         let group_title = msg.chat.title();
-                        let group_span = span!(Level::INFO, "group", id = &group_id, name = &group_title);
+                        let username: Option<&str>;
+                        let user = match msg.from() {
+                            Some(user) => {
+                                username = Some(&user.first_name);
+                                Some(user.id)
+                            },
+                            _ => {
+                                username = None;
+                                None
+                            }
+                        };
+
+                        let group_span = span!(Level::INFO, "command", id = &group_id, name = &group_title, by = &user, username = &username);
 
                         async {
                             info!("Received command {:?}", &cmd);
